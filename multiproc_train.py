@@ -10,6 +10,7 @@ from tqdm import tqdm
 from typing import List, Dict, Any
 from torch.utils.data import Dataset, DataLoader
 from collections import deque
+import argparse
 
 from board import Board
 from model import ReversiNet
@@ -17,10 +18,10 @@ from mcts import MCTS
 from train import StateHistory
 
 class ReversiDataset(Dataset):
-    def __init__(self, states, policies, values):
-        self.states = states
-        self.policies = policies
-        self.values = values
+    def __init__(self, states, policies, values, device):
+        self.states = torch.tensor(np.array(states), dtype=torch.float32).to(device)
+        self.policies = torch.tensor(np.array(policies), dtype=torch.float32).to(device)
+        self.values = torch.tensor(np.array(values), dtype=torch.float32).to(device)
         
     def __len__(self):
         return len(self.states)
@@ -34,12 +35,24 @@ def self_play_worker(rank, config, result_queue):
     np.random.seed(int(time.time() * 1000 + rank) % 2**32)
     random.seed(int(time.time() * 1000 + rank) % 2**32)
     
-    # 加载模型
-    current_model = ReversiNet(history_length=config['history_length'])
-    best_model = ReversiNet(history_length=config['history_length'])
+    # 确定进程使用的设备
+    if config['use_gpu'] and torch.cuda.is_available():
+        # 多GPU情况下，不同进程使用不同GPU
+        if torch.cuda.device_count() > 1:
+            gpu_id = rank % torch.cuda.device_count()
+            device = f"cuda:{gpu_id}"
+            print(f"进程 {rank} 使用 GPU {gpu_id}: {torch.cuda.get_device_name(gpu_id)}")
+        else:
+            device = "cuda"
+    else:
+        device = "cpu"
     
-    current_model.load_state_dict(torch.load(config['current_model_path']))
-    best_model.load_state_dict(torch.load(config['best_model_path']))
+    # 加载模型
+    current_model = ReversiNet(history_length=config['history_length'], device=device)
+    best_model = ReversiNet(history_length=config['history_length'], device=device)
+    
+    current_model.load_state_dict(torch.load(config['current_model_path'], map_location=device))
+    best_model.load_state_dict(torch.load(config['best_model_path'], map_location=device))
     
     current_model.eval()
     best_model.eval()
@@ -176,11 +189,13 @@ def augment_state(state: np.ndarray, policy: np.ndarray) -> List[tuple]:
 
 def evaluate_model(current_model_path, best_model_path, config):
     """评估当前模型与最佳模型的对抗表现"""
-    current_model = ReversiNet(history_length=config['history_length'])
-    best_model = ReversiNet(history_length=config['history_length'])
+    device = config['device']
     
-    current_model.load_state_dict(torch.load(current_model_path))
-    best_model.load_state_dict(torch.load(best_model_path))
+    current_model = ReversiNet(history_length=config['history_length'], device=device)
+    best_model = ReversiNet(history_length=config['history_length'], device=device)
+    
+    current_model.load_state_dict(torch.load(current_model_path, map_location=device))
+    best_model.load_state_dict(torch.load(best_model_path, map_location=device))
     
     current_model.eval()
     best_model.eval()
@@ -261,8 +276,11 @@ def evaluate_model(current_model_path, best_model_path, config):
 
 def train_model(training_data, current_model_path, config):
     """训练模型"""
-    model = ReversiNet(history_length=config['history_length'])
-    model.load_state_dict(torch.load(current_model_path))
+    device = config['device']
+    
+    model = ReversiNet(history_length=config['history_length'], device=device)
+    model.load_state_dict(torch.load(current_model_path, map_location=device))
+    model.train()
     
     optimizer = optim.Adam(model.parameters(), lr=config['learning_rate'])
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, factor=0.5)
@@ -281,9 +299,10 @@ def train_model(training_data, current_model_path, config):
     
     # 创建数据集和数据加载器
     dataset = ReversiDataset(
-        np.array(states), 
-        np.array(policies), 
-        np.array(values)
+        states=states, 
+        policies=policies, 
+        values=values,
+        device=device
     )
     dataloader = DataLoader(
         dataset, 
@@ -293,17 +312,11 @@ def train_model(training_data, current_model_path, config):
     )
     
     # 训练模型
-    model.train()
     total_loss = 0
     total_policy_loss = 0
     total_value_loss = 0
     
     for states, policies, values in tqdm(dataloader, desc="Training Model"):
-        # 转换为张量
-        states = states.float()
-        policies = policies.float()
-        values = values.float()
-        
         # 前向传播
         pred_policies, pred_values = model(states)
         
@@ -335,35 +348,80 @@ def train_model(training_data, current_model_path, config):
     
     # 保存训练后的模型
     model_save_path = f"reversi_model_epoch_{config['epoch']}.pth"
-    torch.save(model.state_dict(), model_save_path)
+    model.save(model_save_path)
     
     return model_save_path
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='多进程训练黑白棋AI')
+    parser.add_argument('--num_games', type=int, default=200, help='每轮自对弈游戏数')
+    parser.add_argument('--num_epochs', type=int, default=100, help='训练轮数')
+    parser.add_argument('--num_simulations', type=int, default=200, help='MCTS模拟次数')
+    parser.add_argument('--eval_simulations', type=int, default=400, help='评估时的MCTS模拟次数')
+    parser.add_argument('--batch_size', type=int, default=256, help='训练批次大小')
+    parser.add_argument('--learning_rate', type=float, default=0.001, help='学习率')
+    parser.add_argument('--eval_games', type=int, default=20, help='评估时的游戏数量')
+    parser.add_argument('--num_workers', type=int, default=0, help='工作进程数，默认为CPU核心数的一半')
+    parser.add_argument('--no_gpu', action='store_true', help='不使用GPU')
+    parser.add_argument('--gpu_id', type=int, default=0, help='主进程使用的GPU ID')
+    return parser.parse_args()
+
 def main():
+    args = parse_args()
+    
     # MP相关设置
     mp.set_start_method('spawn', force=True)
+    
+    # 决定使用的设备
+    use_gpu = not args.no_gpu and torch.cuda.is_available()
+    if use_gpu:
+        if torch.cuda.device_count() > 1:
+            print(f"发现 {torch.cuda.device_count()} 个 GPU")
+            device = f"cuda:{args.gpu_id}"
+        else:
+            device = "cuda"
+        print(f"主进程使用 GPU: {torch.cuda.get_device_name(device.split(':')[-1] if ':' in device else 0)}")
+    else:
+        device = "cpu"
+        if not args.no_gpu:
+            print("警告: 未找到可用的GPU，使用CPU代替")
+    
+    # 如果用户没有指定工作进程数，默认使用CPU核心数的一半（如果使用GPU则更多）
+    num_workers = args.num_workers
+    if num_workers <= 0:
+        if use_gpu:
+            # 如果有GPU，每个GPU分配一些进程
+            num_workers = max(2, min(mp.cpu_count() // 2, torch.cuda.device_count() * 2))
+        else:
+            # 使用CPU时约一半的核心
+            num_workers = max(2, mp.cpu_count() // 2)
     
     # 配置
     config = {
         'board_size': 8,
-        'num_games': 200,  # 每轮自对弈游戏数
-        'num_epochs': 100,  # 训练轮数
-        'batch_size': 256,
-        'learning_rate': 0.001,
-        'num_simulations': 200,  # 自对弈时MCTS模拟次数
-        'eval_simulations': 400, # 评估时MCTS模拟次数
+        'num_games': args.num_games,
+        'num_epochs': args.num_epochs,
+        'batch_size': args.batch_size,
+        'learning_rate': args.learning_rate,
+        'num_simulations': args.num_simulations,
+        'eval_simulations': args.eval_simulations,
         'history_length': 8,
-        'num_workers': min(8, mp.cpu_count()),  # 工作进程数，最多8个
-        'eval_games': 20,
+        'num_workers': num_workers,
+        'eval_games': args.eval_games,
         'win_threshold': 0.55,
         'curriculum_steps': 5,
+        'device': device,
+        'use_gpu': use_gpu
     }
+    
+    print(f"开始训练，使用 {num_workers} 个工作进程")
+    print(f"每轮 {args.num_games} 局自对弈，批次大小 {args.batch_size}")
     
     # 确保模型文件存在
     if not os.path.exists('reversi_model_best.pth'):
         # 初始化模型
-        init_model = ReversiNet(history_length=config['history_length'])
-        torch.save(init_model.state_dict(), 'reversi_model_best.pth')
+        init_model = ReversiNet(history_length=config['history_length'], device=device)
+        init_model.save('reversi_model_best.pth')
     
     # 复制最佳模型作为当前模型
     current_model_path = 'reversi_model_current.pth'

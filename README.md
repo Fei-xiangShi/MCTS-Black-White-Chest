@@ -13,20 +13,26 @@
   - 数据增强
   - 课程学习
 - **多进程训练**：充分利用多核 CPU 加速训练
+- **GPU 加速**：支持 CUDA 加速训练和推理
 - **灵活配置**：可根据需要调整各项参数
 - **友好界面**：简单易用的命令行工具
 
 ## 安装要求
 
 - Python 3.7+
-- PyTorch 1.7+
+- PyTorch 1.7+（支持 CUDA 的版本更佳）
 - NumPy
 - tqdm
 
 可以通过以下命令安装依赖：
 
 ```bash
+# CPU 版本
 pip install torch numpy tqdm
+
+# GPU 版本 (CUDA 11.7 示例)
+pip install torch --extra-index-url https://download.pytorch.org/whl/cu117
+pip install numpy tqdm
 ```
 
 ## 快速开始
@@ -34,28 +40,40 @@ pip install torch numpy tqdm
 ### 训练模型
 
 ```bash
-# 单进程训练
+# 单进程训练 (CPU)
 python run.py train --mode single --games 100 --epochs 10 --simulations 200
+
+# 单进程训练 (GPU)
+python run.py train --mode single --games 100 --epochs 10 --simulations 200 --gpu_id 0
 
 # 多进程训练（更快）
 python run.py train --mode multi --games 200 --epochs 50 --simulations 200
+
+# 多进程训练 (GPU)
+python run.py train --mode multi --games 200 --epochs 50 --simulations 200 --gpu_id 0
 ```
 
 ### 与 AI 对战
 
 ```bash
-# 使用 MCTS（更强但更慢）
+# 使用 MCTS（更强但更慢）- CPU
 python run.py play --model reversi_model_best.pth --simulations 800
 
-# 直接使用策略网络（更快但可能较弱）
-python run.py play --model reversi_model_best.pth --no_mcts
+# 使用 MCTS - GPU
+python run.py play --model reversi_model_best.pth --simulations 800 --gpu_id 0
+
+# 直接使用策略网络（更快但可能较弱）- GPU
+python run.py play --model reversi_model_best.pth --no_mcts --gpu_id 0
 ```
 
 ### 评估模型
 
 ```bash
-# 比较两个模型的强度
+# 比较两个模型的强度 (CPU)
 python run.py eval --model1 reversi_model_best.pth --model2 reversi_model_epoch_10.pth --games 20
+
+# 比较两个模型的强度 (GPU)
+python run.py eval --model1 reversi_model_best.pth --model2 reversi_model_epoch_10.pth --games 20 --gpu_id 0
 ```
 
 ## 系统架构
@@ -89,6 +107,9 @@ python run.py eval --model1 reversi_model_best.pth --model2 reversi_model_epoch_
 | `--games` | 每轮自对弈游戏数 | 100 | 100-1000 |
 | `--epochs` | 训练轮数 | 10 | 10-100 |
 | `--simulations` | MCTS 模拟次数 | 200 | 100-800 |
+| `--batch_size` | 训练批次大小 | 32/256 | 32-512 |
+| `--no_gpu` | 不使用 GPU | False | - |
+| `--gpu_id` | 使用的 GPU ID | 0 | 0-(GPU数-1) |
 
 ### 游戏参数
 
@@ -97,6 +118,8 @@ python run.py eval --model1 reversi_model_best.pth --model2 reversi_model_epoch_
 | `--model` | 模型文件路径 | reversi_model_best.pth |
 | `--no_mcts` | 不使用 MCTS（直接用策略网络） | False |
 | `--simulations` | MCTS 模拟次数 | 800 |
+| `--no_gpu` | 不使用 GPU | False |
+| `--gpu_id` | 使用的 GPU ID | 0 |
 
 ### 评估参数
 
@@ -106,6 +129,8 @@ python run.py eval --model1 reversi_model_best.pth --model2 reversi_model_epoch_
 | `--model2` | 模型2文件路径 | reversi_model_current.pth |
 | `--games` | 评估游戏数量 | 20 |
 | `--simulations` | MCTS 模拟次数 | 400 |
+| `--no_gpu` | 不使用 GPU | False |
+| `--gpu_id` | 使用的 GPU ID | 0 |
 
 ## 训练建议
 
@@ -113,16 +138,32 @@ python run.py eval --model1 reversi_model_best.pth --model2 reversi_model_epoch_
    - 使用较小的游戏数（100-200）
    - 较少的 MCTS 模拟次数（100-200）
    - 快速迭代产生初步有效的模型
+   - CPU 训练足够
 
 2. **中期训练**：
    - 增加游戏数（300-500）
    - 增加 MCTS 模拟次数（400-600）
    - 使用多进程加速训练
+   - GPU 加速更有效
 
 3. **后期优化**：
    - 大量游戏数（500+）
    - 较多的 MCTS 模拟次数（600+）
    - 调低学习率进行精细调整
+   - GPU 加速几乎是必需的
+
+## GPU 加速
+
+系统支持 GPU 加速训练和推理，以显著提高性能：
+
+- **多 GPU 支持**：如果系统有多个 GPU，可以通过 `--gpu_id` 参数指定使用哪个 GPU
+- **多进程训练**：在多进程训练中，系统会自动将不同进程分配到不同 GPU
+- **内存优化**：模型会自动管理 GPU 内存使用，包括在需要时将数据迁移到 GPU
+
+要获得最佳性能，推荐：
+- 使用支持 CUDA 的 GPU（NVIDIA）
+- 安装与 GPU 兼容的 PyTorch 版本
+- 训练时使用较大的批次大小（对于 GPU 训练，推荐 256-512）
 
 ## 技术细节
 
@@ -145,16 +186,22 @@ python run.py eval --model1 reversi_model_best.pth --model2 reversi_model_epoch_
 1. **训练过慢**：
    - 减少 MCTS 模拟次数
    - 使用多进程训练
-   - 考虑使用 GPU 加速（需修改代码）
+   - 开启 GPU 加速
 
-2. **AI 太弱**：
+2. **GPU 内存不足**：
+   - 减小批次大小
+   - 减少模型通道数
+   - 考虑使用混合精度训练
+
+3. **AI 太弱**：
    - 增加训练轮数
    - 增加 MCTS 模拟次数
    - 检查训练损失是否稳定下降
 
-3. **模型无法加载**：
+4. **模型无法加载**：
    - 确保模型结构与保存时一致
    - 检查 PyTorch 版本兼容性
+   - 检查 CPU/GPU 兼容性问题
 
 ## 致谢
 

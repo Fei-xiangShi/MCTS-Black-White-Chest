@@ -38,10 +38,11 @@ class AttentionBlock(nn.Module):
         return self.gamma * out + x
 
 class ReversiNet(nn.Module):
-    def __init__(self, board_size: int = 8, num_channels: int = 128, history_length: int = 8):
+    def __init__(self, board_size: int = 8, num_channels: int = 128, history_length: int = 8, device=None):
         super().__init__()
         self.board_size = board_size
         self.history_length = history_length
+        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         
         # 输入通道: 2 * (history_length + 1) (当前状态和历史状态的黑白棋子位置)
         input_channels = 2 * (history_length + 1)
@@ -88,6 +89,9 @@ class ReversiNet(nn.Module):
             nn.Linear(256, 1),
             nn.Tanh()
         )
+        
+        # 移动模型到指定设备
+        self.to(self.device)
     
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -98,6 +102,8 @@ class ReversiNet(nn.Module):
             policy: 落子概率, shape为(batch_size, board_size * board_size)
             value: 状态价值, shape为(batch_size, 1)
         """
+        # 确保输入张量在正确的设备上
+        x = x.to(self.device)
         features = self.initial_conv(x)
         
         # 应用残差块和注意力块
@@ -121,6 +127,27 @@ class ReversiNet(nn.Module):
         """
         self.eval()
         with torch.no_grad():
+            # 确保输入张量在正确的设备上
+            state = state.to(self.device)
             policy, value = self(state)
             policy = F.softmax(policy, dim=1)
-        return policy, value 
+        return policy, value
+    
+    @staticmethod
+    def get_device():
+        """获取可用的设备（GPU或CPU）"""
+        return 'cuda' if torch.cuda.is_available() else 'cpu'
+        
+    def save(self, path):
+        """保存模型权重"""
+        torch.save(self.state_dict(), path)
+        
+    @classmethod
+    def load(cls, path, board_size=8, history_length=8, device=None):
+        """加载模型权重"""
+        device = device or cls.get_device()
+        model = cls(board_size=board_size, history_length=history_length, device=device)
+        # 加载权重到CPU，然后再转移到指定设备上，这样可以在不同设备间迁移模型
+        model.load_state_dict(torch.load(path, map_location=device))
+        model.to(device)
+        return model 

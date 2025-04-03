@@ -28,6 +28,7 @@ class MCTS:
         self.num_simulations = num_simulations
         self.c_puct = c_puct
         self.virtual_loss = 1.0  # 虚拟损失值
+        self.device = model.device  # 获取模型使用的设备
         
     def run(self, board: Board, player: int, history=None) -> np.ndarray:
         """
@@ -77,14 +78,18 @@ class MCTS:
                 state_tensor = self._prepare_state(search_history)
                 policy, value = self.model.predict(state_tensor)
                 
+                # 从GPU获取值
+                policy_np = policy.cpu().numpy()
+                value_np = value.cpu().numpy()
+                
                 # 创建子节点
                 legal_moves = current_board.get_legal_moves(current_player)
                 for move in legal_moves:
                     move_idx = move[0] * 8 + move[1]
-                    node.children[move_idx] = Node(policy[0, move_idx].item())
+                    node.children[move_idx] = Node(policy_np[0, move_idx].item())
                 
                 # 反向传播
-                self.backpropagate(search_path, value.item(), player)
+                self.backpropagate(search_path, value_np.item(), player)
             else:
                 # 游戏结束，使用实际结果
                 winner = current_board.get_winner()

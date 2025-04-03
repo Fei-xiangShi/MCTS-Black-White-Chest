@@ -2,6 +2,7 @@
 import argparse
 import os
 import sys
+import torch
 
 
 def main():
@@ -19,6 +20,9 @@ def main():
     train_parser.add_argument('--epochs', type=int, default=10, help='训练轮数')
     train_parser.add_argument(
         '--simulations', type=int, default=200, help='MCTS模拟次数')
+    train_parser.add_argument('--batch_size', type=int, default=32, help='训练批次大小')
+    train_parser.add_argument('--no_gpu', action='store_true', help='不使用GPU加速')
+    train_parser.add_argument('--gpu_id', type=int, default=0, help='指定使用的GPU ID，如果有多个GPU')
 
     # 游戏命令
     play_parser = subparsers.add_parser('play', help='与AI对战')
@@ -28,6 +32,8 @@ def main():
         '--no_mcts', action='store_true', help='不使用MCTS，直接使用策略网络（更快但可能更弱）')
     play_parser.add_argument('--simulations', type=int,
                              default=800, help='MCTS模拟次数（更多=更强但更慢）')
+    play_parser.add_argument('--no_gpu', action='store_true', help='不使用GPU加速')
+    play_parser.add_argument('--gpu_id', type=int, default=0, help='指定使用的GPU ID，如果有多个GPU')
 
     # 评估命令
     eval_parser = subparsers.add_parser('eval', help='评估模型')
@@ -38,6 +44,8 @@ def main():
     eval_parser.add_argument('--games', type=int, default=20, help='评估游戏数量')
     eval_parser.add_argument('--simulations', type=int,
                              default=400, help='MCTS模拟次数')
+    eval_parser.add_argument('--no_gpu', action='store_true', help='不使用GPU加速')
+    eval_parser.add_argument('--gpu_id', type=int, default=0, help='指定使用的GPU ID，如果有多个GPU')
 
     args = parser.parse_args()
 
@@ -45,27 +53,48 @@ def main():
         parser.print_help()
         return
 
+    # 检查GPU可用性
+    has_gpu = torch.cuda.is_available()
+    if has_gpu:
+        gpu_info = f"发现 GPU: {torch.cuda.get_device_name(0)}"
+        if torch.cuda.device_count() > 1:
+            gpu_info += f" (共 {torch.cuda.device_count()} 个GPU)"
+        print(gpu_info)
+    else:
+        print("未检测到可用的 GPU，将使用 CPU 运行")
+
     # 执行相应命令
     if args.command == 'train':
+        gpu_flag = "" if args.no_gpu else "--device cuda"
+        gpu_id_flag = f"--gpu_id {args.gpu_id}" if has_gpu and not args.no_gpu else ""
+        
         if args.mode == 'single':
             # 单进程训练
-            cmd = f"python train.py --num_games {args.games} --num_epochs {args.epochs} --num_simulations {args.simulations}"
+            cmd = f"python train.py --num_games {args.games} --num_epochs {args.epochs} \
+                  --num_simulations {args.simulations} --batch_size {args.batch_size} {gpu_flag} {gpu_id_flag}"
             print(f"启动单进程训练：{cmd}")
             os.system(cmd)
         else:
             # 多进程训练
-            cmd = f"python multiproc_train.py --num_games {args.games} --num_epochs {args.epochs} --num_simulations {args.simulations}"
+            gpu_no_flag = "--no_gpu" if args.no_gpu else ""
+            cmd = f"python multiproc_train.py --num_games {args.games} --num_epochs {args.epochs} \
+                  --num_simulations {args.simulations} --batch_size {args.batch_size} {gpu_no_flag} {gpu_id_flag}"
             print(f"启动多进程训练：{cmd}")
             os.system(cmd)
 
     elif args.command == 'play':
         mcts_flag = "" if not args.no_mcts else "--no_mcts"
-        cmd = f"python play.py --model {args.model} {mcts_flag} --simulations {args.simulations}"
+        gpu_flag = "" if args.no_gpu else "--device cuda"
+        gpu_id_flag = f"--gpu_id {args.gpu_id}" if has_gpu and not args.no_gpu else ""
+        cmd = f"python play.py --model {args.model} {mcts_flag} --simulations {args.simulations} {gpu_flag} {gpu_id_flag}"
         print(f"开始游戏：{cmd}")
         os.system(cmd)
 
     elif args.command == 'eval':
         # 创建临时评估脚本
+        gpu_device = "cpu" if args.no_gpu else ("cuda" if has_gpu else "cpu")
+        gpu_id = args.gpu_id if has_gpu and not args.no_gpu else 0
+        
         script_content = f"""
 import torch
 import numpy as np
@@ -75,15 +104,18 @@ from mcts import MCTS
 from board import Board
 from train import StateHistory
 
-def evaluate_models(model1_path, model2_path, num_games, num_simulations):
-    model1 = ReversiNet()
-    model2 = ReversiNet()
+def evaluate_models(model1_path, model2_path, num_games, num_simulations, device="{gpu_device}", gpu_id={gpu_id}):
+    # 设置设备
+    if device == "cuda" and torch.cuda.is_available():
+        if torch.cuda.device_count() > 1 and gpu_id is not None:
+            device = f"cuda:{gpu_id}"
+        print(f"使用 GPU: {{torch.cuda.get_device_name(0)}}")
+    else:
+        device = "cpu"
+        print("使用 CPU")
     
-    model1.load_state_dict(torch.load(model1_path))
-    model2.load_state_dict(torch.load(model2_path))
-    
-    model1.eval()
-    model2.eval()
+    model1 = ReversiNet.load(model1_path, device=device)
+    model2 = ReversiNet.load(model2_path, device=device)
     
     mcts1 = MCTS(model1, num_simulations)
     mcts2 = MCTS(model2, num_simulations)

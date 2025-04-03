@@ -59,7 +59,8 @@ class ReversiTrainer:
                  curriculum_steps: int = 5,
                  history_length: int = 8,
                  eval_games: int = 20,
-                 win_threshold: float = 0.55):
+                 win_threshold: float = 0.55,
+                 device: str = None):
         self.board_size = board_size
         self.num_simulations = num_simulations
         self.num_games = num_games
@@ -70,14 +71,17 @@ class ReversiTrainer:
         self.history_length = history_length
         self.eval_games = eval_games
         self.win_threshold = win_threshold
+        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        print(f"使用设备: {self.device}")
         
         # 创建当前模型和最佳模型
-        self.current_model = ReversiNet(board_size, history_length=history_length)
-        self.best_model = ReversiNet(board_size, history_length=history_length)
+        self.current_model = ReversiNet(board_size, history_length=history_length, device=self.device)
+        self.best_model = ReversiNet(board_size, history_length=history_length, device=self.device)
         
         # 加载最佳模型如果存在
         if os.path.exists('reversi_model_best.pth'):
-            self.best_model.load_state_dict(torch.load('reversi_model_best.pth'))
+            self.best_model.load_state_dict(torch.load('reversi_model_best.pth', map_location=self.device))
         
         self.current_model.load_state_dict(self.best_model.state_dict())
         
@@ -360,9 +364,9 @@ class ReversiTrainer:
                 states, policies, values = zip(*batch)
                 
                 # 准备批次数据
-                states = torch.tensor(np.stack(states), dtype=torch.float32)
-                policies = torch.tensor(np.stack(policies), dtype=torch.float32)
-                values = torch.tensor(values, dtype=torch.float32)
+                states = torch.tensor(np.stack(states), dtype=torch.float32).to(self.device)
+                policies = torch.tensor(np.stack(policies), dtype=torch.float32).to(self.device)
+                values = torch.tensor(values, dtype=torch.float32).to(self.device)
                 
                 # 前向传播
                 pred_policies, pred_values = self.current_model(states)
@@ -394,7 +398,7 @@ class ReversiTrainer:
             print(f"Learning Rate: {self.optimizer.param_groups[0]['lr']:.6f}")
             
             # 保存当前模型
-            torch.save(self.current_model.state_dict(), f"reversi_model_epoch_{epoch + 1}.pth")
+            self.current_model.save(f"reversi_model_epoch_{epoch + 1}.pth")
             
             # 评估当前模型
             if epoch > 0:  # 跳过第一轮评估，因为模型刚初始化
@@ -404,7 +408,7 @@ class ReversiTrainer:
                 if win_rate >= self.win_threshold:
                     print(f"New best model found! Win rate: {win_rate:.2f}")
                     self.best_model.load_state_dict(self.current_model.state_dict())
-                    torch.save(self.best_model.state_dict(), "reversi_model_best.pth")
+                    self.best_model.save("reversi_model_best.pth")
                 else:
                     print(f"Current model not better than best model. Win rate: {win_rate:.2f}")
 
@@ -415,15 +419,34 @@ def parse_args():
     parser.add_argument('--num_simulations', type=int, default=800, help='MCTS模拟次数')
     parser.add_argument('--batch_size', type=int, default=32, help='训练批次大小')
     parser.add_argument('--learning_rate', type=float, default=0.001, help='学习率')
+    parser.add_argument('--device', type=str, default=None, 
+                       help='使用的设备，可以是"cuda"或"cpu"，默认自动选择')
+    parser.add_argument('--gpu_id', type=int, default=0,
+                       help='如果有多个GPU，指定使用哪个GPU，默认为0')
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
+    
+    # 设置GPU设备
+    if args.device == 'cuda' and torch.cuda.is_available():
+        if torch.cuda.device_count() > 1:
+            print(f"发现 {torch.cuda.device_count()} 个 GPU")
+            device = f"cuda:{args.gpu_id}"
+        else:
+            device = "cuda"
+        print(f"使用 GPU: {torch.cuda.get_device_name(args.gpu_id)}")
+    else:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cpu" and args.device == 'cuda':
+            print("警告: 未找到可用的GPU，使用CPU代替")
+    
     trainer = ReversiTrainer(
         num_games=args.num_games,
         num_epochs=args.num_epochs,
         num_simulations=args.num_simulations,
         batch_size=args.batch_size,
-        learning_rate=args.learning_rate
+        learning_rate=args.learning_rate,
+        device=device
     )
     trainer.train() 

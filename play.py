@@ -4,6 +4,7 @@ from board import Board
 from model import ReversiNet
 from mcts import MCTS
 import time
+import argparse
 
 class StateHistory:
     def __init__(self, max_length=8):
@@ -45,14 +46,18 @@ class ReversiGame:
                  model_path: str = "reversi_model_best.pth", 
                  use_mcts: bool = True, 
                  num_simulations: int = 800,
-                 history_length: int = 8):
+                 history_length: int = 8,
+                 device: str = None):
         self.board = Board()
         self.history = StateHistory(max_length=history_length)
         self.history.add(self.board.get_state())
         
-        self.model = ReversiNet(history_length=history_length)
-        self.model.load_state_dict(torch.load(model_path))
-        self.model.eval()
+        # 确定使用的设备
+        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"使用设备: {self.device}")
+        
+        # 加载模型
+        self.model = ReversiNet.load(model_path, history_length=history_length, device=self.device)
         
         self.use_mcts = use_mcts
         self.mcts = MCTS(self.model, num_simulations) if use_mcts else None
@@ -120,7 +125,7 @@ class ReversiGame:
             # 直接使用策略网络
             state_tensor = torch.tensor(self.history.get_state_with_history(), dtype=torch.float32).unsqueeze(0)
             policy, _ = self.model.predict(state_tensor)
-            policy = policy.numpy().flatten()
+            policy = policy.cpu().numpy().flatten()  # 从GPU获取数据
             
             # 只考虑合法动作
             legal_policy = np.zeros(64)
@@ -200,18 +205,32 @@ class ReversiGame:
             print("平局!")
 
 if __name__ == "__main__":
-    import argparse
-    
     parser = argparse.ArgumentParser(description='黑白棋游戏')
     parser.add_argument('--model', type=str, default='reversi_model_best.pth', help='模型文件路径')
     parser.add_argument('--no_mcts', action='store_true', help='不使用MCTS，直接使用策略网络（更快但可能更弱）')
     parser.add_argument('--simulations', type=int, default=800, help='MCTS模拟次数（更多=更强但更慢）')
+    parser.add_argument('--device', type=str, default=None, help='使用的设备，可以是"cuda"或"cpu"，默认自动选择')
+    parser.add_argument('--gpu_id', type=int, default=0, help='如果有多个GPU，指定使用哪个GPU，默认为0')
     
     args = parser.parse_args()
+    
+    # 设置GPU设备
+    if args.device == 'cuda' and torch.cuda.is_available():
+        if torch.cuda.device_count() > 1:
+            print(f"发现 {torch.cuda.device_count()} 个 GPU")
+            device = f"cuda:{args.gpu_id}"
+        else:
+            device = "cuda"
+        print(f"使用 GPU: {torch.cuda.get_device_name(args.gpu_id)}")
+    else:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cpu" and args.device == 'cuda':
+            print("警告: 未找到可用的GPU，使用CPU代替")
     
     game = ReversiGame(
         model_path=args.model,
         use_mcts=not args.no_mcts,
-        num_simulations=args.simulations
+        num_simulations=args.simulations,
+        device=device
     )
     game.play() 
