@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Tuple
 
 class ResidualBlock(nn.Module):
     def __init__(self, num_channels):
@@ -93,7 +94,7 @@ class ReversiNet(nn.Module):
         # 移动模型到指定设备
         self.to(self.device)
     
-    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         前向传播
         Args:
@@ -116,7 +117,7 @@ class ReversiNet(nn.Module):
         value = self.value_head(features)
         return policy, value
     
-    def predict(self, state: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def predict(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         预测给定状态的策略和价值
         Args:
