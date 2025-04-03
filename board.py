@@ -19,6 +19,12 @@ class Board:
         self.board[mid][mid-1] = self.BLACK
         self.board[mid][mid] = self.WHITE
         
+    def copy(self):
+        """复制当前棋盘状态，返回一个新的棋盘对象"""
+        new_board = Board(self.size)
+        new_board.board = self.board.copy()
+        return new_board
+        
     def get_legal_moves(self, player: int) -> List[Tuple[int, int]]:
         """获取当前玩家的合法落子位置"""
         legal_moves = []
