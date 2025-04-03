@@ -14,6 +14,15 @@ from mcts import MCTS
 
 class StateHistory:
     def __init__(self, max_length=8):
+        """
+        初始化历史状态记录器
+        Args:
+            max_length: 历史记录最大长度，不包括当前状态
+        注意：
+            - 总通道数为 2 * (max_length + 1)
+            - +1 是因为包括当前状态
+            - *2 是因为每个状态有黑白两个通道
+        """
         self.max_length = max_length
         self.history = []
         
@@ -23,7 +32,10 @@ class StateHistory:
             self.history.pop(0)
     
     def get_state_with_history(self):
-        """返回包含历史的状态张量，用0填充不足的历史"""
+        """
+        返回包含历史的状态张量，用0填充不足的历史
+        返回的张量通道数为 2 * (max_length + 1)
+        """
         current = self.history[-1]
         channels = []
         

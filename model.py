@@ -46,7 +46,10 @@ class ReversiNet(nn.Module):
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
         
         # 输入通道: 2 * (history_length + 1) (当前状态和历史状态的黑白棋子位置)
+        # 历史长度=8时，通道数应为18: 2*9=18
+        # 每个历史状态有2个通道(黑棋和白棋)
         input_channels = 2 * (history_length + 1)
+        print(f"Model initialized with input_channels={input_channels}, history_length={history_length}")
         
         self.initial_conv = nn.Sequential(
             nn.Conv2d(input_channels, num_channels, 3, padding=1),
