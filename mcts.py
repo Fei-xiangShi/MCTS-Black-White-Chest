@@ -46,7 +46,7 @@ class MCTS:
         # 如果没有提供历史，创建一个新的历史对象
         if history is None:
             from train import StateHistory
-            history = StateHistory()
+            history = StateHistory(max_length=self.model.history_length)
             history.add(root.state)
             
         # 并行模拟
@@ -57,7 +57,7 @@ class MCTS:
             current_player = player
             
             # 为搜索创建历史的副本
-            search_history = type(history)()
+            search_history = type(history)(max_length=self.model.history_length)
             for state in history.history:
                 search_history.add(state)
             

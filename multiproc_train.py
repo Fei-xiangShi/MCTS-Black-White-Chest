@@ -422,6 +422,19 @@ def main():
         # 初始化模型
         init_model = ReversiNet(history_length=config['history_length'], device=device)
         init_model.save('reversi_model_best.pth')
+    else:
+        # 检查现有模型是否与当前配置匹配，如果不匹配则重新创建
+        try:
+            # 尝试加载模型来验证
+            test_model = ReversiNet(history_length=config['history_length'], device=device)
+            test_model.load_state_dict(torch.load('reversi_model_best.pth', map_location=device))
+            print("现有模型验证成功，历史长度兼容")
+        except Exception as e:
+            print(f"现有模型可能与当前配置不兼容: {str(e)}")
+            print("创建新的模型文件...")
+            os.remove('reversi_model_best.pth')
+            init_model = ReversiNet(history_length=config['history_length'], device=device)
+            init_model.save('reversi_model_best.pth')
     
     # 复制最佳模型作为当前模型
     current_model_path = 'reversi_model_current.pth'
